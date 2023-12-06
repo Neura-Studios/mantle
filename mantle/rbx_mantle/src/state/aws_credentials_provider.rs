@@ -37,9 +37,10 @@ async fn chain_provider_credentials(
     if let Some(ref profile_provider) = provider.profile_provider {
         if let Ok(creds) = profile_provider.credentials().await {
             println!(
-                "Using profile creds - key: {0} | secret: {1}",
+                "Using profile creds - key: {0} | secret: {1} | token: {2}",
                 creds.aws_access_key_id(),
-                creds.aws_secret_access_key()
+                creds.aws_secret_access_key(),
+                creds.token()
             );
             return Ok(creds);
         }

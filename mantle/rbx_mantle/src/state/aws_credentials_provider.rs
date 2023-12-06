@@ -36,13 +36,28 @@ async fn chain_provider_credentials(
     }
     if let Some(ref profile_provider) = provider.profile_provider {
         if let Ok(creds) = profile_provider.credentials().await {
+            println!(
+                "Using profile creds - key: {0} | secret: {1}",
+                creds.aws_access_key_id(),
+                creds.aws_secret_access_key()
+            );
             return Ok(creds);
         }
     }
     if let Ok(creds) = provider.container_provider.credentials().await {
+        println!(
+            "Using container creds - key: {0} | secret: {1}",
+            creds.aws_access_key_id(),
+            creds.aws_secret_access_key()
+        );
         return Ok(creds);
     }
     if let Ok(creds) = provider.instance_metadata_provider.credentials().await {
+        println!(
+            "Using instance metadata creds - key: {0} | secret: {1}",
+            creds.aws_access_key_id(),
+            creds.aws_secret_access_key()
+        );
         return Ok(creds);
     }
     Err(CredentialsError::new(

@@ -390,6 +390,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3d7b894f5411737b7867f4827955924d7c254fc9f4d91a6aad6b097804b1018b"
 
 [[package]]
+name = "colorchoice"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b6a852b24ab71dffc585bcb46eaf7959d175cb865a7152e35b348d1b2960422"
+
+[[package]]
 name = "const-random"
 version = "0.1.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -404,16 +410,10 @@ version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9d839f2a20b0aee515dc581a6172f2321f96cab76c1a38a4c584a194955390e"
 dependencies = [
- "getrandom 0.2.8",
+ "getrandom 0.2.15",
  "once_cell",
  "tiny-keccak",
 ]
-
-[[package]]
-name = "colorchoice"
-version = "1.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b6a852b24ab71dffc585bcb46eaf7959d175cb865a7152e35b348d1b2960422"
 
 [[package]]
 name = "const_fn"
@@ -1665,7 +1665,7 @@ checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
 
 [[package]]
 name = "mantle"
-version = "0.11.18"
+version = "0.11.18-neura.1"
 dependencies = [
  "clap 2.34.0",
  "difference",
@@ -2008,7 +2008,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a4d6a8c22fc714f0c2373e6091bf6f5e9b37b1bc0b1184874b7e0a4e303d318f"
 dependencies = [
  "dlv-list",
- "hashbrown 0.14.3",
+ "hashbrown 0.14.5",
 ]
 
 [[package]]
@@ -2556,7 +2556,7 @@ dependencies = [
 
 [[package]]
 name = "rbx_mantle"
-version = "0.11.18"
+version = "0.11.18-neura.1"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2569,7 +2569,7 @@ dependencies = [
  "rbx_api",
  "rbx_auth",
  "rbxcloud",
- "rusoto_core",
+ "rusoto_core 0.47.0",
  "rusoto_s3",
  "rusoto_sts",
  "rust-ini",
@@ -2872,8 +2872,8 @@ dependencies = [
  "bytes",
  "crc32fast",
  "futures",
- "http",
- "hyper",
+ "http 0.2.9",
+ "hyper 0.14.24",
  "hyper-tls",
  "lazy_static",
  "log",
@@ -2914,7 +2914,7 @@ dependencies = [
  "chrono",
  "dirs-next",
  "futures",
- "hyper",
+ "hyper 0.14.24",
  "serde",
  "serde_json",
  "shlex",
@@ -2974,10 +2974,10 @@ dependencies = [
  "futures",
  "hex",
  "hmac",
- "http",
- "hyper",
+ "http 0.2.9",
+ "hyper 0.14.24",
  "log",
- "md-5",
+ "md-5 0.9.1",
  "percent-encoding",
  "pin-project-lite",
  "rusoto_credential 0.48.0",

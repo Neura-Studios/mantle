@@ -2,14 +2,17 @@ name: Integration Tests
 
 on:
   schedule:
-  - cron: '0 5 * * *'
+    - cron: '0 5 * * *'
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/cache@v2
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: 1.79.0
+      - uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/bin/

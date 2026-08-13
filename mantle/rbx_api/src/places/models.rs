@@ -63,10 +63,6 @@ impl Default for PlaceConfigurationModel {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct RemovePlaceResponse {}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ListPlacesResponse {
     pub next_page_cursor: Option<String>,
     pub data: Vec<ListPlaceResponse>,
@@ -76,9 +72,4 @@ pub struct ListPlacesResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ListPlaceResponse {
     pub id: AssetId,
-}
-
-pub enum PlaceFileFormat {
-    Xml,
-    Binary,
 }

@@ -1,3 +1,4 @@
+use rbx_auth::CsrfTokenRequestError;
 use reqwest::StatusCode;
 use serde::Deserialize;
 use thiserror::Error;
@@ -9,6 +10,9 @@ use crate::models::AssetTypeId;
 pub enum RobloxApiError {
     #[error("HTTP client error: {0}")]
     HttpClient(#[from] reqwest::Error),
+
+    #[error(transparent)]
+    RequestFactoryError(#[from] CsrfTokenRequestError),
 
     #[error("Authorization has been denied for this request. Check your ROBLOSECURITY cookie.")]
     Authorization,
@@ -54,6 +58,9 @@ pub enum RobloxApiError {
 
     #[error("Place file size may be too large.")]
     RbxlPlaceFileSizeMayBeTooLarge,
+
+    #[error(transparent)]
+    Other(#[from] anyhow::Error),
 }
 
 // Temporary to make the new errors backwards compatible with the String errors throughout the project.

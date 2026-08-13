@@ -1,66 +1,134 @@
 pub mod models;
 
-use std::{ffi::OsStr, fs, path::PathBuf};
+use std::{ffi::OsStr, fs, path::PathBuf, time::Duration};
 
-use reqwest::header;
+use anyhow::anyhow;
+use models::{Asset, CreateAssetRequest, Creator, OperationResult};
+use reqwest::{header, multipart::Form};
+use serde::de;
 use serde_json::json;
+use tokio::time::sleep;
 
 use crate::{
     errors::{RobloxApiError, RobloxApiResult},
-    helpers::{handle, handle_as_json, handle_as_json_with_status},
+    helpers::{get_file_part, handle, handle_as_json},
     models::{AssetId, AssetTypeId, CreatorType},
     RobloxApi,
 };
 
-use self::models::{
-    CreateAssetQuota, CreateAssetQuotasResponse, CreateAudioAssetResponse, CreateImageAssetResponse,
-};
+use self::models::{CreateAssetQuota, CreateAssetQuotasResponse, CreateAudioAssetResponse};
+
+async fn handle_operation<T: de::DeserializeOwned>(
+    result: Result<reqwest::Response, anyhow::Error>,
+) -> RobloxApiResult<OperationResult<T>> {
+    match result {
+        Ok(response) => {
+            let bytes = response.bytes().await?;
+            let operation_result: OperationResult<T> = serde_json::from_slice(&bytes)?;
+            match operation_result.error {
+                None => Ok(operation_result),
+                Some(error) => Err(anyhow!("{}: {}", error.error, error.message)),
+            }
+        }
+        Err(error) => Err(error),
+    }
+    .map_err(RobloxApiError::Other)
+}
 
 impl RobloxApi {
     pub async fn create_image_asset(
         &self,
         file_path: PathBuf,
-        group_id: Option<AssetId>,
-    ) -> RobloxApiResult<CreateImageAssetResponse> {
-        let data = fs::read(&file_path)?;
+        creator: Creator,
+    ) -> RobloxApiResult<AssetId> {
+        let request = serde_json::to_string(&CreateAssetRequest {
+            asset_type: "Image".to_string(),
+            display_name: file_path.display().to_string(),
+            description: file_path.display().to_string(),
+            creation_context: models::CreateAssetContext { creator },
+        })?;
 
-        let file_name = format!(
-            "Images/{}",
-            file_path.file_stem().and_then(OsStr::to_str).unwrap()
-        );
+        let res: Result<_, anyhow::Error> = if let Some(client) = self.open_cloud_client.as_ref() {
+            client
+                .post("https://apis.roblox.com/assets/v1/assets")
+                .multipart(
+                    Form::new()
+                        .text("request", request)
+                        .part("fileContent", get_file_part(&file_path).await?),
+                )
+                .send()
+                .await
+                .map_err(|e| e.into())
+        } else {
+            self.csrf_token_store
+                .send_request(|| async {
+                    Ok(self
+                        .client
+                        .post("https://apis.roblox.com/assets/user-auth/v1/assets")
+                        .multipart(
+                            Form::new()
+                                .text("request", request.clone())
+                                .part("fileContent", get_file_part(&file_path).await?),
+                        ))
+                })
+                .await
+                .map_err(|e| e.into())
+        };
 
-        let mut req = self
-            .client
-            .post("https://data.roblox.com/data/upload/json")
-            .header(reqwest::header::CONTENT_TYPE, "*/*")
-            .body(data)
-            .query(&[
-                ("assetTypeId", &AssetTypeId::Decal.to_string()),
-                ("name", &file_name),
-                ("description", &"madewithmantle".to_owned()),
-            ]);
-        if let Some(group_id) = group_id {
-            req = req.query(&[("groupId", &group_id.to_string())]);
+        let mut attempts_remaining = 5;
+        let mut sleep_duration = Duration::from_millis(500);
+        let mut operation_result: OperationResult<Asset> = handle_operation(res).await?;
+        while !operation_result.done && attempts_remaining > 0 {
+            sleep(sleep_duration).await;
+            let res: Result<_, anyhow::Error> =
+                if let Some(client) = self.open_cloud_client.as_ref() {
+                    client
+                        .get(format!(
+                            "https://apis.roblox.com/assets/v1/{}",
+                            operation_result.path
+                        ))
+                        .send()
+                        .await
+                        .map_err(|e| e.into())
+                } else {
+                    self.csrf_token_store
+                        .send_request(|| async {
+                            Ok(self.client.get(format!(
+                                "https://apis.roblox.com/assets/user-auth/v1/{}",
+                                operation_result.path
+                            )))
+                        })
+                        .await
+                        .map_err(|e| e.into())
+                };
+            operation_result = handle_operation(res).await?;
+            sleep_duration = sleep_duration.mul_f32(1.5);
+            attempts_remaining -= 1;
         }
 
-        handle_as_json_with_status(req).await
+        Ok(operation_result.response.unwrap().asset_id.parse().unwrap())
     }
 
     pub async fn get_create_asset_quota(
         &self,
         asset_type: AssetTypeId,
     ) -> RobloxApiResult<CreateAssetQuota> {
-        let req = self
-            .client
-            .get("https://publish.roblox.com/v1/asset-quotas")
-            .query(&[
-                // TODO: Understand what this parameter does
-                ("resourceType", "1"),
-                ("assetType", &asset_type.to_string()),
-            ]);
+        let res = self
+            .csrf_token_store
+            .send_request(|| async {
+                Ok(self
+                    .client
+                    .get("https://publish.roblox.com/v1/asset-quotas")
+                    .query(&[
+                        // TODO: Understand what this parameter does
+                        ("resourceType", "1"),
+                        ("assetType", &asset_type.to_string()),
+                    ]))
+            })
+            .await;
 
         // TODO: Understand how to interpret multiple quota objects (rather than just using the first one)
-        (handle_as_json::<CreateAssetQuotasResponse>(req).await?)
+        (handle_as_json::<CreateAssetQuotasResponse>(res).await?)
             .quotas
             .first()
             .cloned()
@@ -73,36 +141,46 @@ impl RobloxApi {
         group_id: Option<AssetId>,
         payment_source: CreatorType,
     ) -> RobloxApiResult<CreateAudioAssetResponse> {
-        let data = fs::read(&file_path)?;
+        let res = self
+            .csrf_token_store
+            .send_request(|| async {
+                let data = fs::read(&file_path)?;
 
-        let file_name = format!(
-            "Audio/{}",
-            file_path.file_stem().and_then(OsStr::to_str).unwrap()
-        );
+                let file_name = format!(
+                    "Audio/{}",
+                    file_path.file_stem().and_then(OsStr::to_str).unwrap()
+                );
 
-        let req = self
-            .client
-            .post("https://publish.roblox.com/v1/audio")
-            .json(&json!({
-                "name": file_name,
-                "file": base64::encode(data),
-                "groupId": group_id,
-                "paymentSource": payment_source
-            }));
+                Ok(self
+                    .client
+                    .post("https://publish.roblox.com/v1/audio")
+                    .json(&json!({
+                        "name": file_name,
+                        "file": base64::encode(data),
+                        "groupId": group_id,
+                        "paymentSource": payment_source
+                    })))
+            })
+            .await;
 
-        handle_as_json(req).await
+        handle_as_json(res).await
     }
 
     pub async fn archive_asset(&self, asset_id: AssetId) -> RobloxApiResult<()> {
-        let req = self
-            .client
-            .post(format!(
-                "https://develop.roblox.com/v1/assets/{}/archive",
-                asset_id
-            ))
-            .header(header::CONTENT_LENGTH, 0);
+        let res = self
+            .csrf_token_store
+            .send_request(|| async {
+                Ok(self
+                    .client
+                    .post(format!(
+                        "https://develop.roblox.com/v1/assets/{}/archive",
+                        asset_id
+                    ))
+                    .header(header::CONTENT_LENGTH, 0))
+            })
+            .await;
 
-        handle(req).await?;
+        handle(res).await?;
 
         Ok(())
     }

@@ -85,7 +85,7 @@ async fn chain_provider_credentials(
         // Check SSO profile credentials as fallback //
         println!("Checking profile provider (sso)");
         let aws_config = Ini::load_from_file(get_config_path())
-            .expect(format!("Failed to load AWS config ({:?})", get_config_path()).as_str());
+            .unwrap_or_else(|_| panic!("Failed to load AWS config ({:?})", get_config_path()));
         let profile_name = profile_provider.profile();
         println!("profile name: {}", profile_name);
 

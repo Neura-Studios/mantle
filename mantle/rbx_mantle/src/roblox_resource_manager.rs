@@ -1,6 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use async_trait::async_trait;
@@ -11,24 +12,20 @@ use rbx_api::{
         GrantAssetPermissionRequestAction, GrantAssetPermissionRequestSubjectType,
         GrantAssetPermissionsRequestRequest,
     },
-    assets::models::{
-        CreateAssetQuota, CreateAudioAssetResponse, CreateImageAssetResponse, QuotaDuration,
-    },
+    assets::models::{CreateAssetQuota, CreateAudioAssetResponse, Creator, QuotaDuration},
     badges::models::CreateBadgeResponse,
-    developer_products::models::{
-        CreateDeveloperProductIconResponse, CreateDeveloperProductResponse,
-        GetDeveloperProductResponse,
-    },
+    developer_products::models::{CreateDeveloperProductIconResponse, DeveloperProductResponse},
     experiences::models::{CreateExperienceResponse, ExperienceConfigurationModel},
     game_passes::models::{CreateGamePassResponse, GetGamePassResponse},
     models::{AssetId, AssetTypeId, CreatorType, UploadImageResponse},
     notifications::models::CreateNotificationResponse,
-    places::models::{GetPlaceResponse, PlaceConfigurationModel},
+    places::models::PlaceConfigurationModel,
     social_links::models::{CreateSocialLinkResponse, SocialLinkType},
     spatial_voice::models::UpdateSpatialVoiceSettingsRequest,
+    user::models::GetAuthenticatedUserResponse,
     RobloxApi,
 };
-use rbx_auth::RobloxAuth;
+use rbx_auth::{RobloxCookieStore, RobloxCsrfTokenStore};
 use rbxcloud::rbx::{
     types::{PlaceId, UniverseId},
     v1::{PublishVersionType, RbxCloud},
@@ -331,20 +328,40 @@ pub struct RobloxResourceManager {
     roblox_cloud: Option<RbxCloud>,
     project_path: PathBuf,
     payment_source: CreatorType,
+    user: GetAuthenticatedUserResponse,
 }
 
 impl RobloxResourceManager {
     pub async fn new(project_path: &Path, payment_source: CreatorType) -> Result<Self, String> {
-        let roblox_auth = RobloxAuth::new().await?;
-        let roblox_api = RobloxApi::new(roblox_auth)?;
-        roblox_api.validate_auth().await?;
-
         let open_cloud_api_key = match env::var("MANTLE_OPEN_CLOUD_API_KEY") {
             Ok(v) => {
                 info!("Loaded cookie from ROBLOSECURITY environment variable.");
                 Some(v)
             }
             Err(_) => None,
+        };
+
+        let cookie_store = Arc::new(RobloxCookieStore::new()?);
+        let csrf_token_store = RobloxCsrfTokenStore::new();
+        let roblox_api =
+            RobloxApi::new(cookie_store, csrf_token_store, open_cloud_api_key.clone())?;
+
+        logger::start_action("Logging in:");
+        let user = match roblox_api.get_authenticated_user().await {
+            Ok(user) => {
+                logger::log(format!("User ID: {}", user.id));
+                logger::log(format!("User name: {}", user.name));
+                logger::log(format!("User display name: {}", user.display_name));
+                logger::end_action_without_message();
+                user
+            }
+            Err(err) => {
+                return {
+                    logger::log(Paint::red("Failed to login"));
+                    logger::end_action_without_message();
+                    Err(err.into())
+                }
+            }
         };
 
         let roblox_cloud = open_cloud_api_key.map(|api_key| RbxCloud::new(&api_key));
@@ -354,11 +371,12 @@ impl RobloxResourceManager {
             roblox_cloud,
             project_path: project_path.to_path_buf(),
             payment_source,
+            user,
         })
     }
 
-    fn get_path(&self, file: String) -> PathBuf {
-        self.project_path.join(file)
+    fn get_path<S: Into<String>>(&self, file: S) -> PathBuf {
+        self.project_path.join(file.into())
     }
 }
 
@@ -518,17 +536,7 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
                         version: response.version_number,
                     }))
                 } else {
-                    self.roblox_api
-                        .upload_place(self.get_path(inputs.file_path), place.asset_id)
-                        .await?;
-                    let GetPlaceResponse {
-                        current_saved_version,
-                        ..
-                    } = self.roblox_api.get_place(place.asset_id).await?;
-
-                    Ok(RobloxOutputs::PlaceFile(PlaceFileOutputs {
-                        version: current_saved_version,
-                    }))
+                    Err("Place uploads require Open Cloud authentication. Find out more here: https://mantledeploy.vercel.app/docs/authentication#roblox-open-cloud-api-key".to_string())
                 }
             }
             RobloxInputs::PlaceConfiguration(inputs) => {
@@ -573,7 +581,7 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
             RobloxInputs::Product(inputs) => {
                 let experience = single_output!(dependency_outputs, RobloxOutputs::Experience);
 
-                let CreateDeveloperProductResponse { id } = self
+                let DeveloperProductResponse { product_id, .. } = self
                     .roblox_api
                     .create_developer_product(
                         experience.asset_id,
@@ -583,12 +591,9 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
                     )
                     .await?;
 
-                let GetDeveloperProductResponse { id: product_id } =
-                    self.roblox_api.get_developer_product(id).await?;
-
                 Ok(RobloxOutputs::Product(ProductOutputs {
                     asset_id: product_id,
-                    product_id: id,
+                    product_id,
                 }))
             }
             RobloxInputs::Pass(inputs) => {
@@ -650,18 +655,18 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
                 }))
             }
             RobloxInputs::ImageAsset(inputs) => {
-                let CreateImageAssetResponse {
-                    asset_id,
-                    backing_asset_id,
-                    ..
-                } = self
+                let creator = match inputs.group_id {
+                    Some(group_id) => Creator::GroupId(group_id.to_string()),
+                    None => Creator::UserId(self.user.id.to_string()),
+                };
+                let asset_id = self
                     .roblox_api
-                    .create_image_asset(self.get_path(inputs.file_path), inputs.group_id)
+                    .create_image_asset(self.get_path(&inputs.file_path), creator)
                     .await?;
-
                 Ok(RobloxOutputs::ImageAsset(ImageAssetOutputs {
-                    asset_id: backing_asset_id,
-                    decal_asset_id: Some(asset_id),
+                    asset_id,
+                    // TODO: This breaks archiving assets.
+                    decal_asset_id: None,
                 }))
             }
             RobloxInputs::AudioAsset(inputs) => {
@@ -1082,6 +1087,7 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
                 if let Some(decal_asset_id) = outputs.decal_asset_id {
                     self.roblox_api.archive_asset(decal_asset_id).await?;
                 }
+                // TODO: if no decal ID is available use Open Cloud API to archive. rbx_cloud currently doesn't support this API
             }
             RobloxOutputs::AudioAsset(outputs) => {
                 self.roblox_api.archive_asset(outputs.asset_id).await?;

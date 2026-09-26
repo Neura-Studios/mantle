@@ -1,11 +1,11 @@
 pub mod models;
 
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use reqwest::multipart::Form;
 
 use crate::{
-    errors::RobloxApiResult,
+    errors::{RobloxApiError, RobloxApiResult},
     helpers::{get_file_part, handle, handle_as_json},
     models::AssetId,
     RobloxApi,
@@ -15,26 +15,53 @@ use self::models::{
     CreateDeveloperProductIconResponse, DeveloperProductResponse, ListDeveloperProductsResponse,
 };
 
+const ICON_POLL_ATTEMPTS: u32 = 5;
+const ICON_POLL_INTERVAL: Duration = Duration::from_secs(1);
+
 impl RobloxApi {
     pub async fn create_developer_product_icon(
         &self,
+        experience_id: AssetId,
         developer_product_id: AssetId,
         icon_file: PathBuf,
     ) -> RobloxApiResult<CreateDeveloperProductIconResponse> {
+        let previous_icon_id = self
+            .get_developer_product(experience_id, developer_product_id)
+            .await?
+            .icon_image_asset_id;
+
         let res = self
             .csrf_token_store
             .send_request(|| async {
                 Ok(self
                     .client
-                    .post(format!(
-                        "https://apis.roblox.com/developer-products/v1/developer-products/{}/image",
-                        developer_product_id
+                    .patch(format!(
+                        "https://apis.roblox.com/developer-products/v2/universes/{}/developer-products/{}",
+                        experience_id, developer_product_id
                     ))
                     .multipart(Form::new().part("imageFile", get_file_part(&icon_file).await?)))
             })
             .await;
+        handle(res).await?;
 
-        handle_as_json(res).await
+        let mut icon_id = None;
+        for attempt in 0..ICON_POLL_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(ICON_POLL_INTERVAL).await;
+            }
+            icon_id = self
+                .get_developer_product(experience_id, developer_product_id)
+                .await?
+                .icon_image_asset_id;
+            if icon_id.is_some() && icon_id != previous_icon_id {
+                break;
+            }
+        }
+
+        match icon_id {
+            Some(image_asset_id) => Ok(CreateDeveloperProductIconResponse { image_asset_id }),
+            None => Err(RobloxApiError::MissingCreateDeveloperProductIconResponse),
+        }
     }
 
     pub async fn create_developer_product(

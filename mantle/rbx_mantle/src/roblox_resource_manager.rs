@@ -1,7 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, RwLock},
 };
 
 use async_trait::async_trait;
@@ -329,9 +329,14 @@ pub struct RobloxResourceManager {
     project_path: PathBuf,
     payment_source: CreatorType,
     user: GetAuthenticatedUserResponse,
+    experience_id: RwLock<Option<AssetId>>,
 }
 
 impl RobloxResourceManager {
+    pub fn set_experience_id(&self, experience_id: AssetId) {
+        *self.experience_id.write().unwrap() = Some(experience_id);
+    }
+
     pub async fn new(project_path: &Path, payment_source: CreatorType) -> Result<Self, String> {
         let open_cloud_api_key = match env::var("MANTLE_OPEN_CLOUD_API_KEY") {
             Ok(v) => {
@@ -370,6 +375,7 @@ impl RobloxResourceManager {
             roblox_api,
             roblox_cloud,
             project_path: project_path.to_path_buf(),
+            experience_id: RwLock::new(None),
             payment_source,
             user,
         })
@@ -439,6 +445,7 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
                     root_place_id,
                 } = self.roblox_api.create_experience(inputs.group_id).await?;
 
+                self.set_experience_id(universe_id);
                 Ok(RobloxOutputs::Experience(ExperienceOutputs {
                     asset_id: universe_id,
                     start_place_id: root_place_id,
@@ -566,9 +573,14 @@ impl ResourceManager<RobloxInputs, RobloxOutputs> for RobloxResourceManager {
             RobloxInputs::ProductIcon(inputs) => {
                 let product = single_output!(dependency_outputs, RobloxOutputs::Product);
 
+                let experience_id = self.experience_id.read().unwrap().ok_or(
+                    "The experience ID is required to upload developer product icons.".to_owned(),
+                )?;
+
                 let CreateDeveloperProductIconResponse { image_asset_id } = self
                     .roblox_api
                     .create_developer_product_icon(
+                        experience_id,
                         product.asset_id,
                         self.get_path(inputs.file_path),
                     )
